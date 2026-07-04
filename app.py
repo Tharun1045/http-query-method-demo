@@ -1,262 +1,483 @@
+"""
+HTTP QUERY Method Demo - app.py
+================================
+Demonstrates the difference between:
+  - GET  /products            (filters in URL query string)
+  - POST /products/search     (filters in JSON request body - common workaround)
+  - QUERY /products           (filters in JSON request body - RFC 10008)
+
+Zero external dependencies. Uses only Python's built-in http.server module.
+Run with: python app.py
+"""
+
 import json
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-# In-memory product dataset representing a hypothetical online store.
-# This data will be filtered based on request parameters/body.
+
+# ---------------------------------------------------------------------------
+# In-memory product dataset
+# ---------------------------------------------------------------------------
+# This represents a simple product catalog. In a real application this would
+# come from a database, but for this demo we keep it in memory to stay
+# dependency-free.
 PRODUCTS = [
-    {"id": 1, "name": "Python Crash Course", "category": "book", "price": 29.99, "rating": 4.8, "in_stock": True},
-    {"id": 2, "name": "Clean Code", "category": "book", "price": 35.50, "rating": 4.7, "in_stock": True},
-    {"id": 3, "name": "Design Patterns", "category": "book", "price": 54.99, "rating": 4.5, "in_stock": False},
-    {"id": 4, "name": "Wireless Mouse", "category": "electronics", "price": 19.99, "rating": 4.2, "in_stock": True},
-    {"id": 5, "name": "Mechanical Keyboard", "category": "electronics", "price": 89.99, "rating": 4.6, "in_stock": True},
-    {"id": 6, "name": "Noise Cancelling Headphones", "category": "electronics", "price": 149.99, "rating": 4.9, "in_stock": False},
-    {"id": 7, "name": "Cotton T-Shirt", "category": "clothing", "price": 15.00, "rating": 3.9, "in_stock": True},
-    {"id": 8, "name": "Denim Jacket", "category": "clothing", "price": 59.99, "rating": 4.1, "in_stock": True},
-    {"id": 9, "name": "Leather Boots", "category": "clothing", "price": 120.00, "rating": 4.4, "in_stock": False},
-    {"id": 10, "name": "Chef's Knife", "category": "kitchen", "price": 45.00, "rating": 4.6, "in_stock": True},
-    {"id": 11, "name": "Cast Iron Skillet", "category": "kitchen", "price": 39.99, "rating": 4.7, "in_stock": True},
+    {
+        "id": 1,
+        "name": "Python Crash Course",
+        "category": "book",
+        "price": 29.99,
+        "rating": 4.8,
+        "in_stock": True,
+    },
+    {
+        "id": 2,
+        "name": "Clean Code",
+        "category": "book",
+        "price": 35.50,
+        "rating": 4.7,
+        "in_stock": True,
+    },
+    {
+        "id": 3,
+        "name": "Design Patterns",
+        "category": "book",
+        "price": 54.99,
+        "rating": 4.5,
+        "in_stock": False,
+    },
+    {
+        "id": 4,
+        "name": "Wireless Mouse",
+        "category": "electronics",
+        "price": 19.99,
+        "rating": 4.2,
+        "in_stock": True,
+    },
+    {
+        "id": 5,
+        "name": "Mechanical Keyboard",
+        "category": "electronics",
+        "price": 89.99,
+        "rating": 4.6,
+        "in_stock": True,
+    },
+    {
+        "id": 6,
+        "name": "Noise Cancelling Headphones",
+        "category": "electronics",
+        "price": 149.99,
+        "rating": 4.9,
+        "in_stock": False,
+    },
+    {
+        "id": 7,
+        "name": "Cotton T-Shirt",
+        "category": "clothing",
+        "price": 15.00,
+        "rating": 3.9,
+        "in_stock": True,
+    },
+    {
+        "id": 8,
+        "name": "Denim Jacket",
+        "category": "clothing",
+        "price": 59.99,
+        "rating": 4.1,
+        "in_stock": True,
+    },
+    {
+        "id": 9,
+        "name": "Leather Boots",
+        "category": "clothing",
+        "price": 120.00,
+        "rating": 4.4,
+        "in_stock": False,
+    },
+    {
+        "id": 10,
+        "name": "Chef's Knife",
+        "category": "kitchen",
+        "price": 45.00,
+        "rating": 4.6,
+        "in_stock": True,
+    },
+    {
+        "id": 11,
+        "name": "Cast Iron Skillet",
+        "category": "kitchen",
+        "price": 39.99,
+        "rating": 4.7,
+        "in_stock": True,
+    },
 ]
 
+
+# ---------------------------------------------------------------------------
+# Filter helper
+# ---------------------------------------------------------------------------
 def filter_products(filters):
     """
-    Applies criteria to filter the list of products.
-    Supports category (exact matching), max_price, min_rating, and in_stock.
+    Apply optional filter criteria to the product list.
+
+    Supported filters:
+        category   (str)   - Exact match, case-insensitive.
+        max_price  (float) - Return products where price <= max_price.
+        min_rating (float) - Return products where rating >= min_rating.
+        in_stock   (bool)  - True = only in-stock, False = only out-of-stock.
+
+    'filters' may come from parse_qs() (values are lists of strings) or from
+    json.loads() (values are native Python types). This function handles both.
     """
     results = PRODUCTS.copy()
 
-    # Filter by Category (case-insensitive check)
+    # ---- category ---------------------------------------------------------
     category = filters.get("category")
     if category is not None:
+        # parse_qs returns lists; json body returns a plain string
         if isinstance(category, list):
             category = category[0] if category else None
         if category:
-            results = [p for p in results if p["category"].lower() == category.lower()]
+            results = [
+                p for p in results
+                if p["category"].lower() == category.lower()
+            ]
 
-    # Filter by Maximum Price (less than or equal to)
+    # ---- max_price --------------------------------------------------------
     max_price = filters.get("max_price")
     if max_price is not None:
         if isinstance(max_price, list):
             max_price = max_price[0] if max_price else None
-        if max_price:
+        if max_price is not None:
             try:
                 max_price_val = float(max_price)
                 results = [p for p in results if p["price"] <= max_price_val]
-            except ValueError:
-                pass  # Ignore invalid float values gracefully
+            except (ValueError, TypeError):
+                pass  # ignore bad values; do not crash
 
-    # Filter by Minimum Rating (greater than or equal to)
+    # ---- min_rating -------------------------------------------------------
     min_rating = filters.get("min_rating")
     if min_rating is not None:
         if isinstance(min_rating, list):
             min_rating = min_rating[0] if min_rating else None
-        if min_rating:
+        if min_rating is not None:
             try:
                 min_rating_val = float(min_rating)
                 results = [p for p in results if p["rating"] >= min_rating_val]
-            except ValueError:
-                pass  # Ignore invalid float values gracefully
+            except (ValueError, TypeError):
+                pass
 
-    # Filter by In-Stock Status (boolean check)
+    # ---- in_stock ---------------------------------------------------------
     in_stock = filters.get("in_stock")
     if in_stock is not None:
         if isinstance(in_stock, list):
             in_stock = in_stock[0] if in_stock else None
-        
-        # Convert string (from URL query string) or handle native bool (from JSON)
         if isinstance(in_stock, bool):
+            # Came from JSON body – already a proper boolean
             results = [p for p in results if p["in_stock"] == in_stock]
         elif isinstance(in_stock, str):
-            in_stock_str = in_stock.lower()
-            if in_stock_str in ("true", "1"):
+            # Came from URL query string – convert manually
+            if in_stock.lower() in ("true", "1"):
                 results = [p for p in results if p["in_stock"] is True]
-            elif in_stock_str in ("false", "0"):
+            elif in_stock.lower() in ("false", "0"):
                 results = [p for p in results if p["in_stock"] is False]
 
     return results
 
+
+# ---------------------------------------------------------------------------
+# Request handler
+# ---------------------------------------------------------------------------
 class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
     """
-    A custom handler inheriting from Python's standard BaseHTTPRequestHandler.
-    We implement support for GET, POST, and the new QUERY HTTP method.
+    Custom HTTP request handler.
+
+    Supports GET, POST, QUERY, and OPTIONS.
+
+    Key concepts demonstrated:
+      - GET   : read-only, filters in URL (classic approach).
+      - POST  : body accepted, but semantically "unsafe" per HTTP spec.
+      - QUERY : body accepted AND semantically safe + idempotent (RFC 10008).
     """
 
-    def send_common_headers(self):
+    # Silence the default per-request console logging for a cleaner demo.
+    # Remove this override if you want to see request logs.
+    def log_message(self, format, *args):  # noqa: A002
+        pass
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+    def _set_common_headers(self):
         """
-        Helper to append default CORS headers, Allow, and Accept-Query.
+        Write the shared headers that every response should include.
+
+        Allow         - Lists all HTTP methods this server supports.
+        Accept-Query  - Declares the media type accepted for QUERY bodies
+                        (defined in RFC 10008).
+        CORS headers  - Allow browser clients and tools to call this API.
         """
+        self.send_header("Allow", "GET, POST, QUERY, OPTIONS")
+        self.send_header("Accept-Query", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, QUERY, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        # Explicitly declare supported methods
-        self.send_header("Allow", "GET, POST, QUERY, OPTIONS")
-        # Declare supported media types for the QUERY method (RFC 10008)
-        self.send_header("Accept-Query", "application/json")
 
-    def send_json_response(self, status_code, data):
-        """
-        Helper method to serialize a dictionary and send a JSON HTTP response.
-        """
-        response_bytes = json.dumps(data, indent=2).encode("utf-8")
+    def _send_json(self, status_code, data):
+        """Serialize 'data' to JSON and send it as an HTTP response."""
+        body = json.dumps(data, indent=2).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(response_bytes)))
-        self.send_common_headers()
+        self.send_header("Content-Length", str(len(body)))
+        self._set_common_headers()
         self.end_headers()
-        self.wfile.write(response_bytes)
+        self.wfile.write(body)
 
+    def _read_json_body(self):
+        """
+        Read the request body and parse it as JSON.
+        Returns (parsed_dict, error_response_or_None).
+        """
+        content_length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+        try:
+            return json.loads(raw.decode("utf-8")), None
+        except json.JSONDecodeError as exc:
+            return None, {"error": "Bad Request", "message": f"Invalid JSON: {exc}"}
+
+    # ------------------------------------------------------------------
+    # OPTIONS – CORS preflight
+    # ------------------------------------------------------------------
     def do_OPTIONS(self):
         """
-        Handle OPTIONS preflight requests which are triggered by browser applications
-        performing CORS verification, especially for newer HTTP methods like QUERY.
+        Respond to browser CORS preflight requests.
+
+        Browsers send OPTIONS before any cross-origin request that uses a
+        non-simple method (QUERY is non-simple) or a custom Content-Type.
+        Returning 204 + CORS headers tells the browser the actual request
+        is allowed.
         """
-        self.send_response(204)  # 204 No Content is typical for OPTIONS
-        self.send_common_headers()
+        self.send_response(204)
+        self._set_common_headers()
         self.end_headers()
 
+    # ------------------------------------------------------------------
+    # GET /products
+    # ------------------------------------------------------------------
     def do_GET(self):
         """
-        Endpoint: GET /products
-        Filters are read from the URL query string.
-        """
-        start_time = time.perf_counter()
+        Classic read-only search via URL query parameters.
 
-        parsed_url = urlparse(self.path)
-        
-        if parsed_url.path != "/products":
-            self.send_json_response(404, {"error": "Not Found", "message": "Try GET /products"})
+        Example:
+            GET /products?category=book&max_price=50
+
+        Strengths:
+            - Universally supported by every HTTP client, library and CDN.
+            - Responses can be cached based on the URL alone.
+            - Bookmarkable and shareable.
+
+        Limitations:
+            - URL length is capped (~2 KB in many browsers/proxies).
+            - Complex filters must be URL-encoded, which can be messy.
+            - Sensitive filter values appear in server access logs.
+        """
+        t_start = time.perf_counter()
+
+        parsed = urlparse(self.path)
+        if parsed.path != "/products":
+            self._send_json(404, {"error": "Not Found", "message": "Use GET /products"})
             return
 
-        query_params = parse_qs(parsed_url.query)
-        
-        clean_filters = {}
-        for k, v in query_params.items():
-            clean_filters[k] = v[0] if len(v) == 1 else v
+        # parse_qs returns {"key": ["value"]} – a list for every key.
+        query_params = parse_qs(parsed.query)
 
-        filtered_products = filter_products(query_params)
+        # Build a cleaner dict for the response (collapse single-item lists).
+        filters_display = {
+            k: (v[0] if len(v) == 1 else v)
+            for k, v in query_params.items()
+        }
 
-        end_time = time.perf_counter()
-        processing_time_ms = (end_time - start_time) * 1000
+        results = filter_products(query_params)
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000, 4)
 
-        payload = {
+        self._send_json(200, {
             "method": "GET",
-            "use_case": "Simple read operation using URL query parameters.",
+            "use_case": (
+                "Simple read-only search. Filters are passed in the URL "
+                "query string. Best for short, non-sensitive filters."
+            ),
             "safe": True,
             "idempotent": True,
-            "processing_time_ms": round(processing_time_ms, 4),
-            "filters_applied": clean_filters,
-            "results_count": len(filtered_products),
-            "products": filtered_products
-        }
-        self.send_json_response(200, payload)
+            "processing_time_ms": elapsed_ms,
+            "filters_applied": filters_display,
+            "results_count": len(results),
+            "products": results,
+        })
 
+    # ------------------------------------------------------------------
+    # POST /products/search
+    # ------------------------------------------------------------------
     def do_POST(self):
         """
-        Endpoint: POST /products/search
-        Filters are read from a JSON request body.
-        POST is a common, acceptable workaround for search when bodies are needed.
+        Common workaround: search filters sent inside a JSON request body.
+
+        Example:
+            POST /products/search
+            Content-Type: application/json
+            { "category": "electronics", "max_price": 100, "in_stock": true }
+
+        Why teams use this:
+            - No URL-length limit; works for very complex payloads.
+            - Sensitive filters stay out of access logs.
+            - Supported by every client library.
+
+        The trade-off:
+            - HTTP defines POST as *unsafe* and *non-idempotent*.
+            - CDNs / reverse proxies will not cache POST responses by default.
+            - Automated clients (e.g., web crawlers) will not retry POST on
+              network failure.
+
+        This is a pragmatic and widely-accepted workaround, but it is
+        semantically imprecise. QUERY (RFC 10008) is the correct solution.
         """
-        start_time = time.perf_counter()
+        t_start = time.perf_counter()
 
         if self.path != "/products/search":
-            self.send_json_response(404, {"error": "Not Found", "message": "Try POST /products/search"})
+            self._send_json(
+                404,
+                {"error": "Not Found", "message": "Use POST /products/search"},
+            )
             return
 
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
-            self.send_json_response(400, {"error": "Bad Request", "message": "POST search requires a JSON request body."})
+            self._send_json(
+                400,
+                {"error": "Bad Request", "message": "A JSON body is required."},
+            )
             return
 
-        body = self.rfile.read(content_length)
-        try:
-            filters = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
-            self.send_json_response(400, {"error": "Bad Request", "message": "Failed to parse body JSON."})
+        filters, err = self._read_json_body()
+        if err:
+            self._send_json(400, err)
             return
 
-        filtered_products = filter_products(filters)
+        results = filter_products(filters)
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000, 4)
 
-        end_time = time.perf_counter()
-        processing_time_ms = (end_time - start_time) * 1000
-
-        payload = {
+        self._send_json(200, {
             "method": "POST",
-            "use_case": "Common workaround for sending complex queries inside a request body.",
-            "safe": False,
-            "idempotent": False,
-            "processing_time_ms": round(processing_time_ms, 4),
+            "use_case": (
+                "Common workaround for complex search with a JSON body. "
+                "Works well in practice, but POST is semantically unsafe "
+                "and non-idempotent, which limits automatic caching and retries."
+            ),
+            "safe": False,       # HTTP spec: POST may modify state
+            "idempotent": False,  # HTTP spec: repeating POST is not guaranteed safe
+            "processing_time_ms": elapsed_ms,
             "filters_applied": filters,
-            "results_count": len(filtered_products),
-            "products": filtered_products
-        }
-        self.send_json_response(200, payload)
+            "results_count": len(results),
+            "products": results,
+        })
 
+    # ------------------------------------------------------------------
+    # QUERY /products  (RFC 10008)
+    # ------------------------------------------------------------------
     def do_QUERY(self):
         """
-        Endpoint: QUERY /products
-        Filters are read from a JSON request body.
-        The QUERY method (RFC 10008) provides safe, idempotent read-only requests with a body.
+        RFC 10008 – The HTTP QUERY method.
+
+        Combines the best of GET and POST for search:
+          - Accepts a structured request body (no URL-length limit).
+          - Declared as *safe*  (read-only, will not modify server state).
+          - Declared as *idempotent* (can be retried safely by clients).
+          - Cacheable in principle (keyed on URL + request body hash).
+
+        Example:
+            QUERY /products
+            Content-Type: application/json
+            { "category": "kitchen", "max_price": 50, "in_stock": true }
+
+        Note:
+            QUERY solves an API *design* problem, not a database *performance*
+            problem. The processing_time_ms in the response will be virtually
+            identical to GET or POST for the same query.
+
+        Content-Type Validation:
+            RFC 10008 requires the body to carry an explicit media type.
+            We accept only application/json and return 415 otherwise.
         """
-        start_time = time.perf_counter()
+        t_start = time.perf_counter()
 
         if self.path != "/products":
-            self.send_json_response(404, {"error": "Not Found", "message": "Try QUERY /products"})
+            self._send_json(
+                404,
+                {"error": "Not Found", "message": "Use QUERY /products"},
+            )
             return
 
-        # Validate Content-Type
+        # Validate Content-Type – QUERY requires an explicit body media type.
         content_type = self.headers.get("Content-Type", "")
         if "application/json" not in content_type.lower():
-            self.send_json_response(415, {"error": "Unsupported Media Type", "message": "QUERY requires Content-Type: application/json"})
+            self._send_json(
+                415,
+                {
+                    "error": "Unsupported Media Type",
+                    "message": (
+                        "QUERY /products requires the header "
+                        "'Content-Type: application/json'."
+                    ),
+                },
+            )
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-        
-        filters = {}
-        if body:
-            try:
-                filters = json.loads(body.decode("utf-8"))
-            except json.JSONDecodeError:
-                self.send_json_response(400, {"error": "Bad Request", "message": "Failed to parse body JSON."})
-                return
+        filters, err = self._read_json_body()
+        if err:
+            self._send_json(400, err)
+            return
 
-        filtered_products = filter_products(filters)
+        results = filter_products(filters)
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000, 4)
 
-        end_time = time.perf_counter()
-        processing_time_ms = (end_time - start_time) * 1000
-
-        payload = {
+        self._send_json(200, {
             "method": "QUERY",
-            "use_case": "Read-only lookup using a request body without changing server state.",
-            "safe": True,
-            "idempotent": True,
-            "processing_time_ms": round(processing_time_ms, 4),
+            "use_case": (
+                "RFC 10008 – Read-only search with a structured request body. "
+                "Safe and idempotent by definition; cacheable by intermediaries."
+            ),
+            "safe": True,        # QUERY explicitly does not modify state
+            "idempotent": True,  # Repeating the same QUERY is always safe
+            "processing_time_ms": elapsed_ms,
             "filters_applied": filters,
-            "results_count": len(filtered_products),
-            "products": filtered_products
-        }
-        self.send_json_response(200, payload)
+            "results_count": len(results),
+            "products": results,
+        })
 
-def run(server_class=HTTPServer, handler_class=DemoHTTPRequestHandler, port=8000):
-    """
-    Start the local Python HTTP server.
-    """
-    server_address = ("", port)
-    httpd = server_class(server_address, handler_class)
-    print(f"=== HTTP QUERY Method Demo Server Starting ===")
-    print(f"Server is running on: http://localhost:{port}")
-    print(f"API endpoints available:")
-    print(f"  - GET   http://localhost:{port}/products (Filters in URL query parameters)")
-    print(f"  - POST  http://localhost:{port}/products/search (Filters in JSON body)")
-    print(f"  - QUERY http://localhost:{port}/products (Filters in JSON body - RFC 10008)")
-    print(f"Press Ctrl+C to stop the server.")
-    print(f"=============================================")
+
+# ---------------------------------------------------------------------------
+# Server entry point
+# ---------------------------------------------------------------------------
+def run(port=8000):
+    """Start the demo HTTP server on localhost:{port}."""
+    httpd = HTTPServer(("", port), DemoHTTPRequestHandler)
+    base = f"http://localhost:{port}"
+    print("=" * 52)
+    print("  HTTP QUERY Method Demo  –  RFC 10008")
+    print("=" * 52)
+    print(f"  Server  : {base}")
+    print(f"  GET     : {base}/products?category=book&max_price=50")
+    print(f"  POST    : {base}/products/search   (JSON body)")
+    print(f"  QUERY   : {base}/products           (JSON body, RFC 10008)")
+    print("=" * 52)
+    print("  Press Ctrl+C to stop.")
+    print()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\nShutting down server...")
+        print("\nServer stopped.")
         httpd.server_close()
+
 
 if __name__ == "__main__":
     run()
