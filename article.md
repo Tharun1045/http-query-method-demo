@@ -12,7 +12,7 @@ That discomfort has a name — and now it has a solution.
 
 `GET` is the natural choice for read-only data. But the URL has limits.
 
-Browsers and proxies often cap URLs at around 2KB. Add 15 filter fields, some with nested values, and you blow past that quickly. Add sensitive values like customer IDs or location data, and now those filters are sitting in your server access logs in plain text.
+In practice, long URLs can be truncated or rejected by certain browsers, proxies, and API gateways — and there is no single universal safe limit. Add sensitive values like customer IDs or location data on top of that, and now those filters are sitting in your server access logs in plain text.
 
 So what do most developers do?
 
@@ -54,7 +54,7 @@ QUERY gives you:
 - **Idempotent** — clients can retry safely
 - **Cacheable** — intermediaries can cache on URL + body hash
 
-It's GET with a body. That's what we always needed.
+It gives read-only queries a structured request body without misusing POST.
 
 ---
 

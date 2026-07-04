@@ -1,8 +1,8 @@
 # http-query-method-demo
 
-> A beginner-friendly Python demo that explains the difference between **HTTP GET**,
-> **HTTP POST** (as a search workaround), and the new **HTTP QUERY** method from
-> [RFC 10008](https://datatracker.ietf.org/doc/html/rfc10008).
+> A beginner-friendly Python demo explaining the difference between
+> **HTTP GET**, **HTTP POST /search** (common workaround), and the new
+> **HTTP QUERY** method from [RFC 10008](https://datatracker.ietf.org/doc/html/rfc10008).
 
 Zero external dependencies. Runs with a single `python app.py`.
 
@@ -34,7 +34,7 @@ GET is perfect for simple lookups. But it has real limits when queries grow:
 
 | Limitation | Detail |
 |---|---|
-| **URL length cap** | Browsers and proxies often cap URLs at ~2KB. Complex nested filters break this. |
+| **URL length** | In practice, long URLs can be truncated or rejected by certain browsers, proxies, and API gateways. There is no universal safe limit. |
 | **Encoding** | Arrays, objects, and special characters need messy percent-encoding. |
 | **Privacy** | URL query strings appear in access logs and browser history in plain text. |
 
@@ -59,8 +59,8 @@ This works well in practice and is widely accepted. The trade-off is semantic:
 | **Idempotent** | ❌ Repeating POST may cause side-effects | ✅ We're only reading |
 | **Cacheable** | ❌ CDNs won't cache POST by default | ✅ We want caching |
 
-This mismatch means CDNs, proxies, and automated clients cannot safely assume the
-request is read-only. QUERY fixes this.
+This mismatch means CDNs, proxies, and automated clients cannot safely assume
+the request is read-only. QUERY fixes this.
 
 ---
 
@@ -71,7 +71,6 @@ The HTTP QUERY method (RFC 10008) is designed exactly for this pattern:
 ```http
 QUERY /products
 Content-Type: application/json
-Accept-Query: application/json
 
 { "category": "kitchen", "max_price": 50, "in_stock": true }
 ```
@@ -83,49 +82,61 @@ Accept-Query: application/json
 | **Idempotent** | ✅ Clients can safely retry |
 | **Cacheable** | ✅ Intermediaries can cache (keyed on body hash) |
 
+It gives read-only queries a structured request body without misusing POST.
+
 ---
 
-## 📊 GET vs POST vs QUERY Flow
+## 📊 How Each Method Works
 
-This diagram shows how the same product search can be represented using GET,
-POST /search, and QUERY.
+The same product search expressed three different ways:
 
-- **GET** sends filters in the URL.
-- **POST /search** sends filters in the request body, but the method does not
-  clearly show that it is read-only.
-- **QUERY** sends filters in the request body while keeping read-only, safe,
-  and idempotent semantics.
+**GET** — filters go in the URL
 
-```mermaid
-flowchart TB
-    subgraph GET["GET"]
-        A1["GET /products?category=book&max_price=50"]
-        A2["Filters in URL query string"]
-        A3["Best for simple read requests"]
-        A1 --> A2 --> A3
-    end
-
-    subgraph POST["POST /search"]
-        B1["POST /products/search"]
-        B2["Body: category=book, max_price=50"]
-        B3["Common workaround for complex search"]
-        B4["Read-only intent is less clear"]
-        B1 --> B2 --> B3 --> B4
-    end
-
-    subgraph QUERY["QUERY"]
-        C1["QUERY /products"]
-        C2["Body: category=book, max_price=50"]
-        C3["Read-only search with request body"]
-        C4["Safe and idempotent"]
-        C5["RFC 10008"]
-        C1 --> C2 --> C3 --> C4 --> C5
-    end
-
-    GET --> NOTE["QUERY improves API clarity, not query speed"]
-    POST --> NOTE
-    QUERY --> NOTE
 ```
+GET /products?category=book&max_price=50
+```
+
+Filters are visible in the URL. Simple to use, but limited for complex queries.
+
+---
+
+**POST /search** — filters go in the request body
+
+```
+POST /products/search
+Body: { "category": "book", "max_price": 50 }
+```
+
+Avoids URL limits. Widely used. But POST is semantically "unsafe", so
+CDNs and proxies cannot assume it is read-only.
+
+---
+
+**QUERY** — filters go in the request body, with correct semantics
+
+```
+QUERY /products
+Body: { "category": "book", "max_price": 50 }
+```
+
+Same body as POST, but QUERY is explicitly defined as safe and idempotent
+in RFC 10008. The infrastructure knows this is a read-only operation.
+
+> All three run the same filter logic in this demo.
+> QUERY improves API clarity — not query speed.
+
+---
+
+## 🔍 Method Comparison Table
+
+| Feature | `GET` | `POST /search` | `QUERY` (RFC 10008) |
+|---|---|---|---|
+| Request body | ❌ | ✅ | ✅ |
+| Safe (read-only) | ✅ | ❌ | ✅ |
+| Idempotent | ✅ | ❌ | ✅ |
+| Default caching | ✅ | ❌ | ✅ (with body hash) |
+| CORS preflight | ❌ (usually none) | Depends | ✅ (OPTIONS required) |
+| Tooling support | ✅ Universal | ✅ Universal | ⚠️ Growing — still early |
 
 ---
 
@@ -142,16 +153,16 @@ If you need faster queries, focus on database indexing and query optimization.
 
 ---
 
-## 🔍 Method Comparison Table
+## 🚫 What this demo is not
 
-| Feature | `GET` | `POST /search` | `QUERY` (RFC 10008) |
-|---|---|---|---|
-| Request body | ❌ | ✅ | ✅ |
-| Safe (read-only) | ✅ | ❌ | ✅ |
-| Idempotent | ✅ | ❌ | ✅ |
-| Default caching | ✅ | ❌ | ✅ (with body hash) |
-| CORS preflight | ❌ (usually none) | Depends | ✅ (OPTIONS required) |
-| Tooling support | ✅ Universal | ✅ Universal | ⚠️ Growing — still early |
+- **Not a performance benchmark** — all three methods use the same filter logic
+  and run in roughly the same time.
+- **Not production-ready server code** — this uses Python's built-in `http.server`
+  for simplicity. A real production API would use a proper framework, logging,
+  authentication, and error handling.
+- **Not a replacement recommendation for every public API today** — QUERY is new.
+  Tooling support is still growing. `POST /search` remains a perfectly valid
+  and widely-used pattern for now.
 
 ---
 
@@ -298,9 +309,9 @@ curl -X QUERY "http://localhost:8000/products" \
 
 ## 📚 References
 
-- [RFC 10008 – The HTTP QUERY Method](https://datatracker.ietf.org/doc/html/rfc10008)
-- [MDN – HTTP Methods](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods)
-- [Python docs – http.server](https://docs.python.org/3/library/http.server.html)
+- [RFC 10008 - The HTTP QUERY Method](https://datatracker.ietf.org/doc/html/rfc10008)
+- [MDN - HTTP Methods](https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods)
+- [Python docs - http.server](https://docs.python.org/3/library/http.server.html)
 
 ---
 
