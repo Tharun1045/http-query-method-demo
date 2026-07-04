@@ -82,15 +82,17 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
     We implement support for GET, POST, and the new QUERY HTTP method.
     """
 
-    def send_cors_headers(self):
+    def send_common_headers(self):
         """
-        Helper to append default CORS headers.
-        Since HTTP QUERY is a non-standard/new HTTP method, web browsers will trigger
-        a CORS preflight check (OPTIONS request) if it is called cross-origin.
+        Helper to append default CORS headers, Allow, and Accept-Query.
         """
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, QUERY, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Explicitly declare supported methods
+        self.send_header("Allow", "GET, POST, QUERY, OPTIONS")
+        # Declare supported media types for the QUERY method (RFC 10008)
+        self.send_header("Accept-Query", "application/json")
 
     def send_json_response(self, status_code, data):
         """
@@ -100,7 +102,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response_bytes)))
-        self.send_cors_headers()
+        self.send_common_headers()
         self.end_headers()
         self.wfile.write(response_bytes)
 
@@ -110,40 +112,33 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         performing CORS verification, especially for newer HTTP methods like QUERY.
         """
         self.send_response(204)  # 204 No Content is typical for OPTIONS
-        self.send_cors_headers()
+        self.send_common_headers()
         self.end_headers()
 
     def do_GET(self):
         """
         Endpoint: GET /products
-        Filters are read from the URL query string (e.g. ?category=book&max_price=50).
-        This is the classic way to request read-only data, but it is limited by URL length
-        limits, URL character encoding rules, and potential security issues with sensitive data in URL logs.
+        Filters are read from the URL query string.
         """
         start_time = time.perf_counter()
 
         parsed_url = urlparse(self.path)
         
-        # Route path check
         if parsed_url.path != "/products":
             self.send_json_response(404, {"error": "Not Found", "message": "Try GET /products"})
             return
 
-        # Extract filters from the URL query string
         query_params = parse_qs(parsed_url.query)
         
-        # Clean query parameters for output representation (collapsing lists where possible)
         clean_filters = {}
         for k, v in query_params.items():
             clean_filters[k] = v[0] if len(v) == 1 else v
 
-        # Apply filtering logic
         filtered_products = filter_products(query_params)
 
         end_time = time.perf_counter()
         processing_time_ms = (end_time - start_time) * 1000
 
-        # Construct final payload
         payload = {
             "method": "GET",
             "use_case": "Simple read operation using URL query parameters.",
@@ -160,8 +155,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         """
         Endpoint: POST /products/search
         Filters are read from a JSON request body.
-        POST is safe to send large request bodies, but POST is historically defined as *unsafe*
-        and *non-idempotent*. Using POST for queries is a popular workaround, but breaks semantic API design.
+        POST is a common, acceptable workaround for search when bodies are needed.
         """
         start_time = time.perf_counter()
 
@@ -169,7 +163,6 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json_response(404, {"error": "Not Found", "message": "Try POST /products/search"})
             return
 
-        # Read JSON body content
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
             self.send_json_response(400, {"error": "Bad Request", "message": "POST search requires a JSON request body."})
@@ -182,18 +175,16 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json_response(400, {"error": "Bad Request", "message": "Failed to parse body JSON."})
             return
 
-        # Apply filtering
         filtered_products = filter_products(filters)
 
         end_time = time.perf_counter()
         processing_time_ms = (end_time - start_time) * 1000
 
-        # Construct response payload
         payload = {
             "method": "POST",
             "use_case": "Common workaround for sending complex queries inside a request body.",
-            "safe": False,        # POST is semantically unsafe (assumed to mutate state)
-            "idempotent": False,  # POST is semantically non-idempotent
+            "safe": False,
+            "idempotent": False,
             "processing_time_ms": round(processing_time_ms, 4),
             "filters_applied": filters,
             "results_count": len(filtered_products),
@@ -205,8 +196,7 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
         """
         Endpoint: QUERY /products
         Filters are read from a JSON request body.
-        The QUERY method (RFC 9458) is designed specifically for this: safe, idempotent read-only requests
-        that require a request body to pass complex, structured query inputs.
+        The QUERY method (RFC 10008) provides safe, idempotent read-only requests with a body.
         """
         start_time = time.perf_counter()
 
@@ -214,7 +204,12 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
             self.send_json_response(404, {"error": "Not Found", "message": "Try QUERY /products"})
             return
 
-        # Read JSON body content
+        # Validate Content-Type
+        content_type = self.headers.get("Content-Type", "")
+        if "application/json" not in content_type.lower():
+            self.send_json_response(415, {"error": "Unsupported Media Type", "message": "QUERY requires Content-Type: application/json"})
+            return
+
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b"{}"
         
@@ -226,18 +221,16 @@ class DemoHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_json_response(400, {"error": "Bad Request", "message": "Failed to parse body JSON."})
                 return
 
-        # Apply filtering
         filtered_products = filter_products(filters)
 
         end_time = time.perf_counter()
         processing_time_ms = (end_time - start_time) * 1000
 
-        # Construct response payload showing off QUERY properties
         payload = {
             "method": "QUERY",
             "use_case": "Read-only lookup using a request body without changing server state.",
-            "safe": True,        # QUERY is semantically safe (does not alter resources)
-            "idempotent": True,  # QUERY is semantically idempotent (can be repeated with same result)
+            "safe": True,
+            "idempotent": True,
             "processing_time_ms": round(processing_time_ms, 4),
             "filters_applied": filters,
             "results_count": len(filtered_products),
@@ -256,7 +249,7 @@ def run(server_class=HTTPServer, handler_class=DemoHTTPRequestHandler, port=8000
     print(f"API endpoints available:")
     print(f"  - GET   http://localhost:{port}/products (Filters in URL query parameters)")
     print(f"  - POST  http://localhost:{port}/products/search (Filters in JSON body)")
-    print(f"  - QUERY http://localhost:{port}/products (Filters in JSON body - RFC 9458)")
+    print(f"  - QUERY http://localhost:{port}/products (Filters in JSON body - RFC 10008)")
     print(f"Press Ctrl+C to stop the server.")
     print(f"=============================================")
     try:

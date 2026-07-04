@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # QUERY example for http-query-method-demo
-# This script sends a native HTTP QUERY request (RFC 9458) with filters in the request body.
+# This script sends a native HTTP QUERY request (RFC 10008) with filters in the request body.
 # This is the modern standard way to perform safe, idempotent read-only lookups with body parameters.
 
 echo ">>> QUERY /products with JSON body"
