@@ -82,6 +82,47 @@ Accept-Query: application/json
 
 ---
 
+## 📊 GET vs POST vs QUERY Flow
+
+This diagram shows how the same product search can be represented using GET, POST /search, and QUERY.
+
+- **GET** sends filters in the URL.
+- **POST /search** sends filters in the request body, but the method does not clearly show that it is read-only.
+- **QUERY** sends filters in the request body while keeping read-only, safe, and idempotent semantics.
+
+```mermaid
+flowchart TB
+    subgraph GET["GET"]
+        A1["GET /products?category=book&max_price=50"]
+        A2["Filters in URL query string"]
+        A3["Best for simple read requests"]
+        A1 --> A2 --> A3
+    end
+
+    subgraph POST["POST /search"]
+        B1["POST /products/search"]
+        B2["Body: category=book, max_price=50"]
+        B3["Common workaround for complex search"]
+        B4["Read-only intent is less clear"]
+        B1 --> B2 --> B3 --> B4
+    end
+
+    subgraph QUERY["QUERY"]
+        C1["QUERY /products"]
+        C2["Body: category=book, max_price=50"]
+        C3["Read-only search with request body"]
+        C4["Safe and idempotent"]
+        C5["RFC 10008"]
+        C1 --> C2 --> C3 --> C4 --> C5
+    end
+
+    GET --> NOTE["QUERY improves API clarity, not query speed"]
+    POST --> NOTE
+    QUERY --> NOTE
+```
+
+---
+
 ## ⚡ Does QUERY make your API faster?
 
 **No.** The `processing_time_ms` field returned by this demo shows it clearly.
